@@ -1,7 +1,7 @@
 package main
 
 // pluginVersion is stamped by CI with -ldflags "-X main.pluginVersion=...".
-var pluginVersion = "0.1.4-dev"
+var pluginVersion = "0.1.5-dev"
 
 const (
 	pluginID = "freebuff-cli"

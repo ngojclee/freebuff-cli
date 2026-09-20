@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -150,10 +148,10 @@ func (h *managementHandler) models() map[string]any {
 	}
 }
 
+// dashboard renders the console. Everything on it is server rendered from the same data
+// the JSON routes return, so the page and the routes cannot disagree.
 func (h *managementHandler) dashboard() (pluginapi.ManagementResponse, error) {
-	status := h.status()
-	models := h.models()
-	body := renderDashboard(status, models)
+	body := renderDashboard(h.status(), h.models(), h.accounts())
 	return pluginapi.ManagementResponse{
 		StatusCode: http.StatusOK,
 		Headers:    http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
@@ -175,72 +173,6 @@ func jsonResponse(status int, payload any) (pluginapi.ManagementResponse, error)
 		Headers:    http.Header{"Content-Type": []string{"application/json"}},
 		Body:       raw,
 	}, nil
-}
-
-// renderDashboard is a single self-contained page: no external assets, no build step, and
-// no credential on screen.
-func renderDashboard(status, models map[string]any) string {
-	modelList := renderChips(asStringSlice(models["published_models"]))
-	upstreamList := renderChips(asStringSlice(models["upstream_models"]))
-	return fmt.Sprintf(`<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>%s</title>
-<style>
-:root{--bg:#f7f5ef;--panel:#fffdfa;--surface:#f0ede5;--inset:#f8f6f1;--ink:#282521;--ink-2:#69635b;--line:#dfdacf;--accent:#2563eb;--radius:8px}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-main{max-width:960px;margin:0 auto;padding:24px}
-h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;margin:0 0 10px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.04em}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:16px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
-.kv{background:var(--inset);border-radius:6px;padding:10px}
-.kv span{display:block;color:var(--ink-2);font-size:12px}
-.kv strong{font-weight:600}
-.chips{display:flex;flex-wrap:wrap;gap:6px}
-.chip{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px}
-button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px}
-pre{background:var(--inset);border-radius:6px;padding:10px;overflow:auto;font-size:12px;margin:0}
-</style></head><body><main>
-<h1>%s</h1>
-<p style="color:var(--ink-2);margin:0 0 16px">version %s</p>
-<div class="card"><h2>State</h2><div class="grid">
-%s
-</div></div>
-<div class="card"><h2>Published models (%s)</h2><div class="chips">%s</div></div>
-<div class="card"><h2>Upstream catalogue (%s)</h2><div class="chips">%s</div></div>
-</main></body></html>`,
-		html.EscapeString(pluginName),
-		html.EscapeString(pluginName),
-		html.EscapeString(pluginVersion),
-		renderState(status),
-		fmt.Sprint(models["published_count"]), modelList,
-		fmt.Sprint(models["upstream_count"]), upstreamList,
-	)
-}
-
-func renderState(status map[string]any) string {
-	keys := []string{
-		"enabled", "auth_dir", "upstream_base_url", "model_alias_prefix",
-		"known_accounts", "rotation_seconds", "refresh_seconds", "waiting_room_seconds",
-	}
-	out := strings.Builder{}
-	for _, key := range keys {
-		value := status[key]
-		fmt.Fprintf(&out, "<div class=\"kv\"><span>%s</span><strong>%s</strong></div>",
-			html.EscapeString(key), html.EscapeString(fmt.Sprint(value)))
-	}
-	return out.String()
-}
-
-func renderChips(values []string) string {
-	if len(values) == 0 {
-		return "<span class=\"chip\">none</span>"
-	}
-	out := strings.Builder{}
-	for _, value := range values {
-		fmt.Fprintf(&out, "<span class=\"chip\">%s</span>", html.EscapeString(value))
-	}
-	return out.String()
 }
 
 func asStringSlice(value any) []string {
