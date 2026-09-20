@@ -114,20 +114,38 @@ func (h *managementHandler) status() map[string]any {
 	}
 }
 
-// accounts lists what the plugin knows, with the label and the run state only. There is
-// no token field, by construction: freebuffAccount is never marshalled here.
+// accounts lists this provider's credentials.
+//
+// The host is asked first, because it knows every auth file whether or not this process
+// has served a request with it. The in-memory cache is only a fallback for a build without
+// the host callback, and it is what made the table read as empty straight after a reload.
+// There is no token field anywhere in this output, by construction.
 func (h *managementHandler) accounts() []map[string]any {
-	cfg := h.runtime.settings.get()
-	accounts := accountStore.list("")
-	out := make([]map[string]any, 0, len(accounts))
-	for _, account := range accounts {
+	out := make([]map[string]any, 0, 8)
+	if views, ok := hostAccountViews(); ok {
+		for _, view := range views {
+			out = append(out, map[string]any{
+				"label":        view.Label,
+				"name":         view.Name,
+				"status":       view.Status,
+				"active":       view.Active,
+				"source":       view.Source,
+				"runtime_only": view.RuntimeOnly,
+				"prefix":       view.Prefix,
+			})
+		}
+		return out
+	}
+	for _, account := range accountStore.list("") {
 		out = append(out, map[string]any{
 			"label":  account.label(),
-			"prefix": account.Prefix,
+			"name":   "",
+			"status": "cached",
 			"active": account.Enabled,
+			"source": "cache",
+			"prefix": account.Prefix,
 		})
 	}
-	_ = cfg
 	return out
 }
 

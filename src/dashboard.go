@@ -17,6 +17,7 @@ func renderDashboard(status, models map[string]any, accounts []map[string]any) s
 	page.WriteString(dashboardHead)
 	page.WriteString(dashboardHeader(status))
 	page.WriteString(dashboardState(status))
+	page.WriteString(dashboardActions())
 	page.WriteString(dashboardAccounts(accounts))
 	page.WriteString(dashboardModels(models))
 	page.WriteString(dashboardScript)
@@ -114,35 +115,52 @@ func dashboardAccounts(accounts []map[string]any) string {
 	out := strings.Builder{}
 	out.WriteString(`<div class="card"><div class="section-title">Accounts</div>`)
 	if len(accounts) == 0 {
-		out.WriteString(`<div class="muted">No Freebuff account is loaded yet. Save a token into the auth directory, or use OAuth Login.</div>`)
+		out.WriteString(`<div class="muted">No Freebuff credential is registered. Save a token into the auth directory, or use OAuth Login.</div>`)
 		out.WriteString(`</div>`)
 		return out.String()
 	}
-	out.WriteString(`<table><thead><tr><th>Account</th><th>Namespace</th><th>Status</th></tr></thead><tbody>`)
+	out.WriteString(`<table><thead><tr><th>Account</th><th>Auth file</th><th>Status</th><th>Source</th></tr></thead><tbody>`)
 	for _, account := range accounts {
 		state := `<span class="tag on">active</span>`
 		if active, ok := account["active"].(bool); !ok || !active {
 			state = `<span class="tag off">inactive</span>`
 		}
-		fmt.Fprintf(&out, "<tr><td>%s</td><td>%s</td><td>%s</td></tr>",
+		if status := textCell(account["status"]); status != "" && status != "ready" {
+			state = fmt.Sprintf(`<span class="tag">%s</span>`, html.EscapeString(status))
+		}
+		fmt.Fprintf(&out, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>",
 			html.EscapeString(stateText(account["label"])),
-			html.EscapeString(stateText(account["prefix"])),
-			state)
+			html.EscapeString(stateText(account["name"])),
+			state,
+			html.EscapeString(sourceCell(account)))
 	}
 	out.WriteString(`</tbody></table>`)
-	out.WriteString(`<div class="hint">One auth file per Freebuff account. Labels only: the token never leaves the auth record and is never rendered here.</div>`)
+	out.WriteString(`<div class="hint">One auth file per Freebuff account, read from the gateway's own credential list. Labels only: the token never leaves the auth record and is never rendered here.</div>`)
 	out.WriteString(`</div>`)
 	return out.String()
 }
 
+// sourceCell says where the row came from, which is the difference between "the gateway has
+// this credential" and "this process happened to use it recently".
+func sourceCell(account map[string]any) string {
+	if runtimeOnly, ok := account["runtime_only"].(bool); ok && runtimeOnly {
+		return "runtime"
+	}
+	if source := textCell(account["source"]); source != "" {
+		return source
+	}
+	return "file"
+}
+
+func textCell(value any) string {
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return ""
+}
+
 func dashboardModels(models map[string]any) string {
 	out := strings.Builder{}
-	out.WriteString(`<div class="card"><div class="section-title">Management access</div>`)
-	out.WriteString(`<div class="access-row"><div><label for="mkey">CPA management key</label>`)
-	out.WriteString(`<input id="mkey" type="password" autocomplete="current-password" placeholder="Only needed to refresh the catalogue now"></div>`)
-	out.WriteString(`<button class="primary" id="refresh">Refresh catalogue</button></div>`)
-	out.WriteString(`<div id="refreshStatus" class="status"></div></div>`)
-
 	fmt.Fprintf(&out, `<div class="card"><div class="section-title">Published models (%s)</div><div class="chips">`,
 		html.EscapeString(stateText(models["published_count"])))
 	out.WriteString(chips(asStringSlice(models["published_models"])))
@@ -159,6 +177,17 @@ func dashboardModels(models map[string]any) string {
 		out.WriteString(`</div></div>`)
 	}
 	return out.String()
+}
+
+// dashboardActions sits directly under State on both consoles. The CodeBuddy console needs
+// the key before it can read anything at all, so putting the card in the same place on both
+// pages keeps the two layouts identical instead of mirroring one quirk.
+func dashboardActions() string {
+	return `<div class="card"><div class="section-title">Actions</div>` +
+		`<div class="access-row"><div><label for="mkey">CPA management key</label>` +
+		`<input id="mkey" type="password" autocomplete="current-password" placeholder="Only needed to refresh the catalogue now"></div>` +
+		`<button class="primary" id="refresh">Refresh catalogue</button></div>` +
+		`<div id="refreshStatus" class="status"></div></div>`
 }
 
 func chips(values []string) string {

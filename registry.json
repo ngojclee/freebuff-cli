@@ -6,7 +6,7 @@
       "name": "Freebuff CLI",
       "description": "CLIProxyAPI plugin that brings Freebuff (codebuff.com) free agents into the gateway as an auth provider and executor. Import one auth token per Freebuff account and the plugin joins the free-tier waiting room for you, rotates upstream agent runs, keeps the free-agent catalogue refreshed, and publishes every model under a freebuff/ namespace so it never collides with another provider. Streaming is passed through frame by frame. Tokens are never logged.",
       "author": "ngojclee",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "repository": "https://github.com/ngojclee/freebuff-cli",
       "homepage": "https://github.com/ngojclee/freebuff-cli",
       "logo": "https://freebuff.com/logo-icon.png",

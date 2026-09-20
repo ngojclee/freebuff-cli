@@ -1,4 +1,4 @@
-VERSION ?= 0.1.6
+VERSION ?= 0.1.7
 GO ?= go
 PLUGIN_ID = freebuff-cli
 OUT = dist/$(PLUGIN_ID)-v$(VERSION).so

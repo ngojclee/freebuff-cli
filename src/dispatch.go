@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -251,19 +252,18 @@ func parseExecutorRequest(raw []byte) (executorRequest, error) {
 	req.Alt, _ = stringValue(decoded, "alt")
 	req.HostCallbackID, _ = stringValue(decoded, "host_callback_id")
 	req.StreamID, _ = stringValue(decoded, "stream_id")
-	if payload, ok := decoded["payload"].(string); ok {
-		req.Payload = []byte(payload)
+	// Payload and StorageJSON are []byte on the host's struct, so over the JSON RPC they
+	// arrive base64 encoded. Reading them as plain text yields a body that parses as
+	// nothing, which is how a real request came back as "the request carried no model".
+	if value, ok := stringValue(decoded, "payload"); ok {
+		req.Payload = decodeHostBytes(value)
 	}
-	if storage, ok := decoded["storage_json"].(string); ok {
-		req.StorageJSON = []byte(storage)
+	if value, ok := stringValue(decoded, "storage_json"); ok {
+		req.StorageJSON = decodeHostBytes(value)
 	}
-	if attributes, ok := mapValue(decoded, "attributes"); ok {
-		req.Attributes = map[string]string{}
-		for key, value := range asMap(attributes) {
-			if text, okText := value.(string); okText {
-				req.Attributes[key] = text
-			}
-		}
+	// The host has used both spellings for the credential attributes bag across releases.
+	if value, ok := mapValue(decoded, "auth_attributes", "attributes"); ok {
+		req.Attributes = stringMapFromAny(asMap(value))
 	}
 	return req, nil
 }
@@ -278,4 +278,30 @@ func payloadModel(payload []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(decoded.Model)
+}
+
+// decodeHostBytes accepts the host's base64 byte fields and falls back to the raw text, so
+// a host that sends the payload unencoded keeps working.
+func decodeHostBytes(value string) []byte {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if decoded, errDecode := base64.StdEncoding.DecodeString(value); errDecode == nil {
+		return decoded
+	}
+	return []byte(value)
+}
+
+func stringMapFromAny(raw map[string]any) map[string]string {
+	if raw == nil {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for key, value := range raw {
+		if text, okText := value.(string); okText {
+			out[key] = text
+		}
+	}
+	return out
 }
