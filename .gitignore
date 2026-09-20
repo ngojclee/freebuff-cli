@@ -1,0 +1,15 @@
+/dist/
+*.so
+*.h
+*.zip
+*.sha256
+*.exe
+.tmp/
+output/
+
+# Credentials are never committed. These patterns cover the local files this project
+# documents; keep them even though nothing matching is tracked today.
+codebuddy-key*.json
+*.info
+.env
+.env.*

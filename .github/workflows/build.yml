@@ -1,0 +1,104 @@
+name: Build CLIProxyAPI Plugin
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # The plugin binary is only ever linux/amd64, but the auth path is written so it also
+  # builds and tests with cgo disabled. Both halves are checked because the Windows
+  # development loop uses the non-cgo stub and production loads the cgo entry, and a
+  # mistake that only appears in one of them must not reach the other.
+  test:
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l ./src ./.github/scripts)"
+          if [ -n "$unformatted" ]; then
+            echo "these files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./src
+
+      - name: Test with cgo enabled and the race detector
+        run: go test -race -count=1 ./src -v
+
+      - name: Test with cgo disabled, the stub path
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 ./src
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build plugin (.so)
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=1 go build -buildvcs=false -trimpath -buildmode=c-shared \
+            -ldflags "-s -w -X main.pluginVersion=${GITHUB_REF_NAME#v}" \
+            -o dist/freebuff-cli.so ./src
+          rm -f dist/*.h
+
+      # The store compares the tag against the versioned file name, and the management
+      # listing falls back to registry.json when the GitHub release lookup fails. A
+      # mismatch between the three is what makes an update look available forever, so
+      # the tag refuses to build unless they agree.
+      - name: Check release version consistency
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          registry="$(python3 -c "import json;print(json.load(open('registry.json'))['plugins'][0]['version'])")"
+          makefile="$(sed -n 's/^VERSION ?= //p' Makefile)"
+          if [ "$registry" != "$version" ]; then
+            echo "registry.json version $registry does not match tag $version"; exit 1
+          fi
+          if [ "$makefile" != "$version" ]; then
+            echo "Makefile VERSION $makefile does not match tag $version"; exit 1
+          fi
+          case "$version" in
+            *[!0-9.]*) echo "version $version is not numeric-dotted; the store would offer it forever"; exit 1 ;;
+          esac
+          echo "version consistency ok: $version"
+
+      - name: Verify the library exports the plugin entry points
+        run: |
+          nm -D --defined-only dist/freebuff-cli.so \
+            | grep -E ' T (cliproxy_plugin_init|cliproxyPluginCall|cliproxyPluginFree|cliproxyPluginShutdown)$' \
+            | wc -l | grep -q '^4$'
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          go run -buildvcs=false ./.github/scripts/package-release.go \
+            -library dist/freebuff-cli.so -entry freebuff-cli.so \
+            -archive "dist/freebuff-cli_${VERSION}_linux_amd64.zip" \
+            -checksum "dist/freebuff-cli_${VERSION}_linux_amd64.zip.sha256"
+          cp "dist/freebuff-cli_${VERSION}_linux_amd64.zip.sha256" dist/checksums.txt
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/freebuff-cli_*_linux_amd64.zip
+            dist/freebuff-cli_*_linux_amd64.zip.sha256
+            dist/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
