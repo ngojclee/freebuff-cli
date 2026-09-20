@@ -79,10 +79,10 @@ func (p *provider) ParseAuth(_ context.Context, req pluginapi.AuthParseRequest) 
 	}, nil
 }
 
-// StartLogin opens a login flow. Because Freebuff hands out tokens on a web page rather
-// than through a redirect, the flow is: open the page, then drop the token into the auth
-// directory; PollLogin detects the new record.
-func (p *provider) StartLogin(_ context.Context, req pluginapi.AuthLoginStartRequest) (pluginapi.AuthLoginStartResponse, error) {
+// StartLogin creates a Freebuff browser session. The vendor's auth page completes the
+// sign-in and the plugin polls the matching vendor session for the auth token, so the
+// operator does not have to copy the token manually.
+func (p *provider) StartLogin(ctx context.Context, _ pluginapi.AuthLoginStartRequest) (pluginapi.AuthLoginStartResponse, error) {
 	cfg := p.settings.get()
 	if !cfg.Enabled {
 		return pluginapi.AuthLoginStartResponse{}, errors.New("freebuff-cli is disabled in configuration")
@@ -92,23 +92,40 @@ func (p *provider) StartLogin(_ context.Context, req pluginapi.AuthLoginStartReq
 	if errBegin != nil {
 		return pluginapi.AuthLoginStartResponse{}, errBegin
 	}
+	loginURL := tokenPageURL
+	instructions := "Open the Freebuff page, sign in, and leave the tab open. The plugin polls the Freebuff session and imports the auth token automatically."
+	mode := "vendor"
+	vendorSession, errVendor := startFreebuffLogin(ctx)
+	if errVendor != nil {
+		mode = "manual"
+		instructions = "Open the Freebuff page, complete the token flow, then save auth-tokens.json into the auth directory. This page detects the new record automatically."
+		hostEventLog("warn", "vendor_login_start_failed", map[string]any{
+			"reason": "freebuff_auth_code_unavailable",
+		})
+	} else {
+		p.logins.attachVendorSession(state, vendorSession)
+		loginURL = vendorSession.LoginURL
+	}
 	hostEventLog("info", "login_started", map[string]any{
 		"auth_dir": redactPath(cfg.ResolvedAuthDir()),
+		"mode":     mode,
 	})
 	return pluginapi.AuthLoginStartResponse{
 		Provider:  providerKey,
-		URL:       tokenPageURL,
+		URL:       loginURL,
 		State:     state,
 		ExpiresAt: expiresAt,
 		Metadata: map[string]any{
-			"instructions": "Sign in on the Freebuff page, copy the auth token it shows, then save it into the auth directory as a .txt file or as {\"type\":\"freebuff\",\"auth_token\":\"...\"}. This page detects the new record automatically.",
+			"mode":         mode,
+			"instructions": instructions,
 			"auth_dir":     redactPath(cfg.ResolvedAuthDir()),
 		},
 	}, nil
 }
 
-// PollLogin looks for the credential the operator just wrote.
-func (p *provider) PollLogin(_ context.Context, req pluginapi.AuthLoginPollRequest) (pluginapi.AuthLoginPollResponse, error) {
+// PollLogin first checks the vendor session created by StartLogin, then falls back to
+// watching the auth directory for the manual token-file flow.
+func (p *provider) PollLogin(ctx context.Context, req pluginapi.AuthLoginPollRequest) (pluginapi.AuthLoginPollResponse, error) {
 	cfg := p.settings.get()
 	if !cfg.Enabled {
 		return pluginapi.AuthLoginPollResponse{}, errors.New("freebuff-cli is disabled in configuration")
@@ -118,6 +135,35 @@ func (p *provider) PollLogin(_ context.Context, req pluginapi.AuthLoginPollReque
 		return pluginapi.AuthLoginPollResponse{
 			Status:  pluginapi.AuthLoginStatusError,
 			Message: "this login flow is unknown or has expired; start a new one",
+		}, nil
+	}
+	if vendorSession, hasVendor := p.logins.vendorSessionFor(req.State); hasVendor {
+		status, errPoll := pollFreebuffLogin(ctx, vendorSession)
+		if errPoll == nil {
+			if status.Error != "" {
+				return pluginapi.AuthLoginPollResponse{
+					Status:  pluginapi.AuthLoginStatusError,
+					Message: status.Error,
+				}, nil
+			}
+			if !status.Pending && status.User != nil && strings.TrimSpace(status.User.AuthToken) != "" {
+				storage := Storage{
+					Type:       providerKey,
+					AuthToken:  status.User.AuthToken,
+					Email:      firstNonEmpty(status.User.Email, status.User.Name, status.User.ID),
+					SourceFile: "vendor-login:" + firstNonEmpty(status.User.ID, status.User.Email, "default"),
+				}
+				p.logins.finish(req.State)
+				hostEventLog("info", "login_completed", map[string]any{"account": storage.DisplayLabel()})
+				return pluginapi.AuthLoginPollResponse{
+					Status: pluginapi.AuthLoginStatusSuccess,
+					Auth:   buildAuthData(storage, cfg),
+				}, nil
+			}
+		}
+		return pluginapi.AuthLoginPollResponse{
+			Status:  pluginapi.AuthLoginStatusPending,
+			Message: "waiting for the Freebuff browser sign-in to complete",
 		}, nil
 	}
 	storage, _, ok, errFind := findLatestAuthFile(cfg.ResolvedAuthDir(), pending.startedAt)

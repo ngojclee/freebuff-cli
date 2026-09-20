@@ -57,9 +57,10 @@ Two ways, both supported:
   (`%USERPROFILE%\.config\manicode\credentials.json` on Windows). The plugin reads that
   file shape directly.
 
-In the management UI, **OAuth Login -> Freebuff CLI** opens the token page and polls the
-auth directory, so the flow is: open the page, copy the token, save the file, and the
-login completes on its own.
+In the management UI, **OAuth Login -> Freebuff CLI** now opens the vendor's generated
+login URL. Complete the browser sign-in and the plugin polls the matching Freebuff
+session, imports the auth token automatically, and leaves the manual token-file flow as a
+fallback when the vendor auth API is unavailable.
 
 ## Configuration reference
 

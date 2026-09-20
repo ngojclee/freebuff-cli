@@ -17,6 +17,7 @@ import (
 type pendingLogin struct {
 	startedAt time.Time
 	expiresAt time.Time
+	vendor    freebuffLoginSession
 }
 
 type loginStore struct {
@@ -65,6 +66,33 @@ func (s *loginStore) finish(state string) {
 	s.mu.Lock()
 	delete(s.pending, strings.TrimSpace(state))
 	s.mu.Unlock()
+}
+
+func (s *loginStore) attachVendorSession(state string, session freebuffLoginSession) {
+	state = strings.TrimSpace(state)
+	if state == "" {
+		return
+	}
+	s.mu.Lock()
+	if entry, found := s.pending[state]; found {
+		entry.vendor = session
+		s.pending[state] = entry
+	}
+	s.mu.Unlock()
+}
+
+func (s *loginStore) vendorSessionFor(state string) (freebuffLoginSession, bool) {
+	state = strings.TrimSpace(state)
+	if state == "" {
+		return freebuffLoginSession{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, found := s.pending[state]
+	if !found || strings.TrimSpace(entry.vendor.FingerprintID) == "" {
+		return freebuffLoginSession{}, false
+	}
+	return entry.vendor, true
 }
 
 func randomState() (string, error) {
