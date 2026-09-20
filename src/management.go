@@ -48,6 +48,10 @@ func registerManagementRoutes() pluginapi.ManagementRegistrationResponse {
 				Path:        "/models",
 				Description: "Published and upstream model lists as JSON.",
 			},
+			{
+				Path:        iconRoutePath,
+				Description: "The Freebuff mark, served same-origin so the management panel always resolves it.",
+			},
 		},
 	}
 }
@@ -63,6 +67,8 @@ func (h *managementHandler) HandleManagement(ctx context.Context, req pluginapi.
 	}
 
 	switch {
+	case req.Method == http.MethodGet && path == iconRoutePath:
+		return iconResponse(), nil
 	case req.Method == http.MethodGet && path == "/status":
 		return jsonResponse(http.StatusOK, h.status())
 	case req.Method == http.MethodGet && path == "/accounts":
