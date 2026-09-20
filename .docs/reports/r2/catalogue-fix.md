@@ -79,3 +79,18 @@ go test ./...                       -> ok  github.com/ngojclee/freebuff-cli/src
 No live CPA mutation in this round beyond the artifact and pin, no restart. All parser
 tests are offline; the live-file simulation was run out of band against the raw GitHub
 file.
+
+## 0.1.2 - resource route fix
+
+The host rejected the dashboard's resource route:
+
+```
+pluginhost: plugin freebuff-cli declared invalid resource route /
+```
+
+`/` is not a valid resource path, so the dashboard was unreachable. 0.1.2 registers
+`/index.html` for the dashboard and exposes `/status`, `/accounts` and `/models` as
+read-only resource routes, which also makes them reachable without the management key for
+quick checks. The only management route left is `POST /models/refresh`, so the on-demand
+network call stays behind management auth; the dashboard no longer offers a button that
+could not authenticate.

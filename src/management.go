@@ -23,16 +23,30 @@ type managementHandler struct {
 func registerManagementRoutes() pluginapi.ManagementRegistrationResponse {
 	return pluginapi.ManagementRegistrationResponse{
 		Routes: []pluginapi.ManagementRoute{
-			{Method: http.MethodGet, Path: managementBasePath + "/status"},
-			{Method: http.MethodGet, Path: managementBasePath + "/accounts"},
-			{Method: http.MethodGet, Path: managementBasePath + "/models"},
+			// The refresh action stays behind management auth: it is the only route that
+			// makes the plugin talk to the network on demand.
 			{Method: http.MethodPost, Path: managementBasePath + "/models/refresh"},
 		},
 		Resources: []pluginapi.ResourceRoute{
+			// Resource paths must be non-empty; the host rejects "/" as an invalid route,
+			// which is why the dashboard is registered as index.html. These routes are
+			// readable without the management key, so they must never carry a token.
 			{
-				Path:        "/",
+				Path:        "/index.html",
 				Menu:        pluginName,
 				Description: "Freebuff account, model and waiting-room state.",
+			},
+			{
+				Path:        "/status",
+				Description: "Redacted plugin state as JSON.",
+			},
+			{
+				Path:        "/accounts",
+				Description: "Known Freebuff accounts as JSON, labels only.",
+			},
+			{
+				Path:        "/models",
+				Description: "Published and upstream model lists as JSON.",
 			},
 		},
 	}
@@ -44,7 +58,7 @@ func (h *managementHandler) HandleManagement(ctx context.Context, req pluginapi.
 		path = path[index+len(managementBasePath):]
 	}
 	path = "/" + strings.Trim(strings.TrimSuffix(path, "/"), "/")
-	if path == "/" {
+	if path == "/" || path == "/index.html" {
 		return h.dashboard()
 	}
 
@@ -188,29 +202,13 @@ pre{background:var(--inset);border-radius:6px;padding:10px;overflow:auto;font-si
 </div></div>
 <div class="card"><h2>Published models (%s)</h2><div class="chips">%s</div></div>
 <div class="card"><h2>Upstream catalogue (%s)</h2><div class="chips">%s</div></div>
-<div class="card"><h2>Actions</h2>
-<button onclick="refreshModels()">Refresh catalogue</button>
-<pre id="out" style="margin-top:12px"></pre>
-</div>
-</main>
-<script>
-async function refreshModels(){
-  const out=document.getElementById('out');
-  out.textContent='refreshing...';
-  try{
-    const response=await fetch('%s/models/refresh',{method:'POST'});
-    const data=await response.json();
-    out.textContent=JSON.stringify(data,null,2);
-  }catch(error){out.textContent='refresh failed: '+error.message;}
-}
-</script></body></html>`,
+</main></body></html>`,
 		html.EscapeString(pluginName),
 		html.EscapeString(pluginName),
 		html.EscapeString(pluginVersion),
 		renderState(status),
 		fmt.Sprint(models["published_count"]), modelList,
 		fmt.Sprint(models["upstream_count"]), upstreamList,
-		managementBasePath,
 	)
 }
 
