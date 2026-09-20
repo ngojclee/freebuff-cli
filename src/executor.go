@@ -100,6 +100,14 @@ func (r *pluginRuntime) runOnce(ctx context.Context, cfg Config, req executorReq
 func (r *pluginRuntime) resolveModel(cfg Config, req executorRequest) (string, string, error) {
 	published := firstNonEmpty(req.Model, payloadModel(req.Payload))
 	if published == "" {
+		// This is the shape mismatch signature: the host sent a model, but under a key
+		// this parser does not read. Logging the key names, and nothing else, makes that
+		// visible in one line instead of through a guess.
+		hostEventLog("warn", "executor_request_unparsed", map[string]any{
+			"keys":        executorRequestKeys(req.RawRequest),
+			"payload_len": len(req.Payload),
+			"storage_len": len(req.StorageJSON),
+		})
 		return "", "", newFreebuffError("invalid_request", "the request carried no model", false, 0)
 	}
 	upstreamModel := cfg.UpstreamModelID(published)

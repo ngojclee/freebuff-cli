@@ -98,3 +98,32 @@ go test ./...       -> ok
 No hand-install of the artifact, on purpose: the previous round showed that
 placing the file before the store installs it makes the reload unreliable. The
 release is published and the store Update should hot-load it.
+
+## 5. Addendum - 0.1.8. The base64 fix was necessary but not sufficient
+
+The live smoke after 0.1.7 still returned "the request carried no model", while
+codebuddy-cli 0.7.22 reached the vendor. That difference localised the fault to
+field naming, not encoding.
+
+`pluginapi.ExecutorRequest` carries **no json tags**, and the host marshals it with
+`encoding/json` (`internal/pluginhost/rpc_client.go`,
+`json.Marshal(sanitizePluginRequest(request))`). So the wire keys are Go field
+names: `Model`, `Payload`, `StorageJSON`, `AuthAttributes`, `StreamID`.
+
+`parseExecutorRequest` looked up `model`, `payload`, `storage_json`. None of those
+exist on the wire, so `Model` was empty and `decodeHostBytes` never ran. The unit
+fixture was written in snake_case, which is why it passed while production failed -
+the exact gap the planner asked about.
+
+Every field now accepts both spellings, which is what any2api-bridge already does
+in production (`stringFromKeys(keys, "payload", "Payload")`).
+
+Added a bounded diagnostic so the next naming change is readable from one log line
+instead of inferred: when model resolution finds nothing, the plugin logs
+`executor_request_unparsed` with the **top-level key names only**, plus payload and
+storage byte counts. No value, no body and no credential is included, and
+`TestExecutorRequestKeysListsNamesOnly` asserts that.
+
+Tests: `TestParseExecutorRequestAcceptsGoFieldNames` (the live shape),
+`TestParseExecutorRequestDecodesBase64Payload` kept as the snake_case case,
+`TestExecutorRequestKeysListsNamesOnly`.

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -218,7 +219,13 @@ func (r *pluginRuntime) disable() {
 }
 
 // executorRequest mirrors pluginapi.ExecutorRequest plus the host fields the RPC layer
-// appends. The host decodes untagged Go fields, so these keys are the Go field names.
+// appends.
+//
+// The host marshals its own struct with encoding/json and that struct carries no json
+// tags, so the keys on the wire are Go field names: "Model", "Payload", "StorageJSON".
+// Older hosts and the appended RPC fields use snake_case instead. Every read below
+// therefore accepts both spellings; picking one is what made a live request come back as
+// "the request carried no model" while the unit fixture, which used snake_case, passed.
 type executorRequest struct {
 	AuthID         string
 	AuthProvider   string
@@ -233,6 +240,9 @@ type executorRequest struct {
 	Attributes     map[string]string
 	HostCallbackID string
 	StreamID       string
+	// RawRequest is kept only so a model-resolution failure can report which fields the
+	// host actually sent. It is never logged or returned; only its key names are.
+	RawRequest []byte
 }
 
 func parseExecutorRequest(raw []byte) (executorRequest, error) {
@@ -244,28 +254,50 @@ func parseExecutorRequest(raw []byte) (executorRequest, error) {
 	if errUnmarshal := json.Unmarshal(raw, &decoded); errUnmarshal != nil {
 		return req, errUnmarshal
 	}
-	req.AuthID, _ = stringValue(decoded, "auth_id")
-	req.AuthProvider, _ = stringValue(decoded, "auth_provider")
-	req.Model, _ = stringValue(decoded, "model")
-	req.Format, _ = stringValue(decoded, "format")
-	req.Stream, _ = boolValue(decoded, "stream")
-	req.Alt, _ = stringValue(decoded, "alt")
-	req.HostCallbackID, _ = stringValue(decoded, "host_callback_id")
-	req.StreamID, _ = stringValue(decoded, "stream_id")
+	req.AuthID, _ = stringValue(decoded, "AuthID", "auth_id")
+	req.AuthProvider, _ = stringValue(decoded, "AuthProvider", "auth_provider")
+	req.Model, _ = stringValue(decoded, "Model", "model")
+	req.Format, _ = stringValue(decoded, "Format", "format")
+	req.Stream, _ = boolValue(decoded, "Stream", "stream")
+	req.Alt, _ = stringValue(decoded, "Alt", "alt")
+	req.HostCallbackID, _ = stringValue(decoded, "HostCallbackID", "host_callback_id")
+	req.StreamID, _ = stringValue(decoded, "StreamID", "stream_id")
+
 	// Payload and StorageJSON are []byte on the host's struct, so over the JSON RPC they
-	// arrive base64 encoded. Reading them as plain text yields a body that parses as
-	// nothing, which is how a real request came back as "the request carried no model".
-	if value, ok := stringValue(decoded, "payload"); ok {
+	// arrive base64 encoded.
+	if value, ok := stringValue(decoded, "Payload", "payload"); ok {
 		req.Payload = decodeHostBytes(value)
 	}
-	if value, ok := stringValue(decoded, "storage_json"); ok {
+	if value, ok := stringValue(decoded, "StorageJSON", "storage_json"); ok {
 		req.StorageJSON = decodeHostBytes(value)
 	}
-	// The host has used both spellings for the credential attributes bag across releases.
-	if value, ok := mapValue(decoded, "auth_attributes", "attributes"); ok {
+	if value, ok := mapValue(decoded, "AuthAttributes", "auth_attributes", "attributes"); ok {
 		req.Attributes = stringMapFromAny(asMap(value))
 	}
+	if value, ok := mapValue(decoded, "Metadata", "metadata"); ok {
+		req.Metadata = asMap(value)
+	}
+	req.RawRequest = raw
 	return req, nil
+}
+
+// executorRequestKeys lists only the top-level key names of an executor request. It exists
+// so a host that changes its field spelling shows up in the log as a name list rather than
+// as a mystery "no model" error. No value, no body and no credential is ever included.
+func executorRequestKeys(raw []byte) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var decoded map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &decoded); errUnmarshal != nil {
+		return []string{"<unparseable>"}
+	}
+	keys := make([]string, 0, len(decoded))
+	for key := range decoded {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // payloadModel reads the model field from the caller's own body, which is authoritative

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -79,5 +80,63 @@ func TestResolveModelFallsBackToThePayload(t *testing.T) {
 	}
 	if agent != "editor-lite" {
 		t.Fatalf("agent = %q, want editor-lite", agent)
+	}
+}
+
+// TestParseExecutorRequestAcceptsGoFieldNames is the live-host regression. pluginapi
+// ExecutorRequest carries no json tags and the host marshals it with encoding/json, so the
+// wire keys are Go field names. A parser that only read snake_case produced the live
+// "the request carried no model" failure while every snake_case unit fixture passed.
+func TestParseExecutorRequestAcceptsGoFieldNames(t *testing.T) {
+	body := `{"model":"freebuff/openai/gpt-5.6-luna","messages":[{"role":"user","content":"hi"}]}`
+	storage := `{"type":"freebuff","auth_token":"aaaa-bbbb-cccc-dddd-eeee"}`
+
+	request, errMarshal := json.Marshal(map[string]any{
+		"AuthID":         "freebuff-abc",
+		"AuthProvider":   "freebuff",
+		"Model":          "freebuff/openai/gpt-5.6-luna",
+		"Format":         "openai",
+		"Stream":         false,
+		"Payload":        base64.StdEncoding.EncodeToString([]byte(body)),
+		"StorageJSON":    base64.StdEncoding.EncodeToString([]byte(storage)),
+		"AuthAttributes": map[string]string{"priority": "5"},
+		"StreamID":       "stream-1",
+	})
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+
+	parsed, errParse := parseExecutorRequest(request)
+	if errParse != nil {
+		t.Fatalf("parse: %v", errParse)
+	}
+	if parsed.Model != "freebuff/openai/gpt-5.6-luna" {
+		t.Fatalf("Model = %q", parsed.Model)
+	}
+	if payloadModel(parsed.Payload) != "freebuff/openai/gpt-5.6-luna" {
+		t.Fatalf("payload did not decode; got %q", string(parsed.Payload))
+	}
+	if parsed.StreamID != "stream-1" || parsed.AuthID != "freebuff-abc" {
+		t.Fatalf("identity fields lost: %+v", parsed)
+	}
+	if parsed.Attributes["priority"] != "5" {
+		t.Fatalf("attributes = %+v", parsed.Attributes)
+	}
+}
+
+// TestExecutorRequestKeysListsNamesOnly guards the diagnostic itself: it must report field
+// names and never a value.
+func TestExecutorRequestKeysListsNamesOnly(t *testing.T) {
+	raw := []byte(`{"Model":"freebuff/x","Payload":"c3VwZXItc2VjcmV0","StorageJSON":"eA=="}`)
+	keys := executorRequestKeys(raw)
+	joined := strings.Join(keys, ",")
+	if joined != "Model,Payload,StorageJSON" {
+		t.Fatalf("keys = %q", joined)
+	}
+	if strings.Contains(joined, "c3VwZXItc2VjcmV0") {
+		t.Fatal("the key list leaked a value")
+	}
+	if got := executorRequestKeys([]byte("not json")); len(got) != 1 || got[0] != "<unparseable>" {
+		t.Fatalf("unparseable marker = %v", got)
 	}
 }
