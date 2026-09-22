@@ -137,7 +137,18 @@ func (r *pluginRuntime) dispatch(method string, request []byte) []byte {
 				},
 			},
 		})
-	case pluginabi.MethodModelStatic, pluginabi.MethodModelRegister, pluginabi.MethodModelForAuth:
+	case pluginabi.MethodModelStatic:
+		// CPA registers an executor-owning plugin's provider catalogue under a second
+		// model client id. That copy does not receive OAuth aliases, so aliased ids must
+		// be omitted here to avoid publishing the original alongside the alias.
+		var envelope modelRequest
+		if errUnmarshal := json.Unmarshal(request, &envelope); errUnmarshal != nil {
+			envelope = modelRequest{}
+		}
+		return envelopeResult(staticModelResponse(r.settings.get(), r.registry, envelope.Host))
+	case pluginabi.MethodModelRegister, pluginabi.MethodModelForAuth:
+		// The full catalogue. CPA applies OAuth aliases, including Keep original, on this
+		// per-auth path.
 		return envelopeResult(currentModelResponse(r.settings.get(), r.registry))
 	case pluginabi.MethodExecutorExecute:
 		body := r.handleExecute(request)
